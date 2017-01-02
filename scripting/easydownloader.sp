@@ -95,6 +95,8 @@ public void processFile(int mode)
           LogError("File '%s' does not exist. Please check entry in file: '%s'", buffer, modeNiceNames[mode]);
         }
       }
+      
+      file.Close();
     }
   } else {
     LogError("Missing required file: '%s'", finalpath);

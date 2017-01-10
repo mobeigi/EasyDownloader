@@ -1,10 +1,11 @@
 #include <sourcemod>
 #include <sdktools>
 
+#pragma semicolon 1
 #pragma newdecls required
 
 // Plugin Informaiton  
-#define VERSION "1.01"
+#define VERSION "1.02"
 
 //Paths
 #define PATH_BASE "configs/easydownloader/"
@@ -18,6 +19,7 @@
 #define MODE_DOWNLOADONLY 5
 
 char modeNiceNames[6][PLATFORM_MAX_PATH];
+bool fakeSoundPrecache = false;
 
 public Plugin myinfo =
 {
@@ -36,6 +38,11 @@ public void OnPluginStart()
   modeNiceNames[MODE_SENTENCEFILES] = "sentencefiles.txt";
   modeNiceNames[MODE_SOUNDS] = "sounds.txt";
   modeNiceNames[MODE_DOWNLOADONLY] = "downloadonly.txt";
+  
+  EngineVersion engineVersion = GetEngineVersion();
+  if (engineVersion == Engine_CSGO || engineVersion == Engine_DOTA) {
+    fakeSoundPrecache = true;
+  }
 }
 
 public void OnMapStart()
@@ -142,7 +149,17 @@ void downloadAndPrecache(char[] file, int mode)
       PrecacheModel(file, true);
     else if (mode == MODE_SENTENCEFILES)
       PrecacheSentenceFile(file, true);
-    else if (mode == MODE_SOUNDS)
-      PrecacheSound(file, true);
+    else if (mode == MODE_SOUNDS) {
+      //Remove sound prefix
+      ReplaceStringEx(file, PLATFORM_MAX_PATH, "sound/", "", -1, -1, false);
+      
+      if (fakeSoundPrecache) {
+        char pathStar[PLATFORM_MAX_PATH];
+        Format(pathStar, sizeof(pathStar), "*%s", file);
+        AddToStringTable(FindStringTable("soundprecache"), pathStar);
+      } else {
+        PrecacheSound(file, true);
+      }
+    }
   }
 }

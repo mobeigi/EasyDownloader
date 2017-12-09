@@ -202,9 +202,8 @@ void DownloadAndPrecache(char[] file, Mode mode, ArrayList &exts)
         return;
     }
     
-    //Add file to downloads table if its not already in the downloads table
-    if (!IsFileInDownloadsTable(file))
-      AddFileToDownloadsTable(file);
+    //Add file to downloads table
+    AddFileToDownloadsTable(file);
     
     //Precache file based on mode
     if (mode == Mode_Decals) {
@@ -247,26 +246,5 @@ stock bool GetFileExtension(const char[] path, char[] ext, int maxlen)
   
   //Everything past first dot is the extension
   Format(ext, maxlen, path[index]);
-  return true;
-}
-
-/**
-* Check if a file is in the downloads table
-*/
-stock bool IsFileInDownloadsTable(const char[] file)
-{
-  static int downloadTableId = INVALID_STRING_TABLE;
-  
-  if (downloadTableId == INVALID_STRING_TABLE) {
-    downloadTableId = FindStringTable("downloadables");
-    if (downloadTableId == INVALID_STRING_TABLE)
-      SetFailState("Failed to get table index of downloads table.");
-  }
-  
-  //If string not found, its not in the downloads table
-  if (FindStringIndex(downloadTableId, file) == INVALID_STRING_INDEX)
-    return false;
-  
-  //Otherwise it is
   return true;
 }

@@ -5,21 +5,30 @@
 #pragma newdecls required
 
 // Plugin Informaiton  
-#define VERSION "1.02"
+#define VERSION "1.03"
 
 //Paths
-#define PATH_BASE "configs/easydownloader/"
+#define CONFIG_BASE_PATH "configs/easydownloader/"
+#define CONFIG_MAX_LINE_LENGTH 1024
+#define EXTENSION_MAX_LENGTH 255
+#define MAX_OPTIONS_GROUPS 2
+#define OPTIONS_GROUP_SEPARATOR "|"
+#define OPTIONS_EXTS_ARGPREFIX "exts="
+#define OPTIONS_EXTS_SEPARATOR ","
 
-//Mode
-#define MODE_DECALS 0
-#define MODE_GENERICS 1
-#define MODE_MODELS 2
-#define MODE_SENTENCEFILES 3
-#define MODE_SOUNDS 4
-#define MODE_DOWNLOADONLY 5
+//Enums
+enum Mode
+{
+  Mode_Decals,
+  Mode_Generics,
+  Mode_Models,
+  Mode_SentenceFiles,
+  Mode_Sounds,
+  Mode_DownloadOnly
+};
 
-char modeNiceNames[6][PLATFORM_MAX_PATH];
-bool fakeSoundPrecache = false;
+char g_ModelNiceNames[Mode][PLATFORM_MAX_PATH];
+bool g_ShouldFakePrecacheSound = false;
 
 public Plugin myinfo =
 {
@@ -32,37 +41,37 @@ public Plugin myinfo =
 
 public void OnPluginStart()
 {
-  modeNiceNames[MODE_DECALS] = "decals.txt";
-  modeNiceNames[MODE_GENERICS] = "generics.txt";
-  modeNiceNames[MODE_MODELS] = "models.txt";
-  modeNiceNames[MODE_SENTENCEFILES] = "sentencefiles.txt";
-  modeNiceNames[MODE_SOUNDS] = "sounds.txt";
-  modeNiceNames[MODE_DOWNLOADONLY] = "downloadonly.txt";
+  g_ModelNiceNames[Mode_Decals] = "decals.txt";
+  g_ModelNiceNames[Mode_Generics] = "generics.txt";
+  g_ModelNiceNames[Mode_Models] = "models.txt";
+  g_ModelNiceNames[Mode_SentenceFiles] = "sentencefiles.txt";
+  g_ModelNiceNames[Mode_Sounds] = "sounds.txt";
+  g_ModelNiceNames[Mode_DownloadOnly] = "downloadonly.txt";
   
   EngineVersion engineVersion = GetEngineVersion();
   if (engineVersion == Engine_CSGO || engineVersion == Engine_DOTA) {
-    fakeSoundPrecache = true;
+    g_ShouldFakePrecacheSound = true;
   }
 }
 
 public void OnMapStart()
 {
   //Read and process config files for all modes
-  readProcessConfig(MODE_DECALS);
-  readProcessConfig(MODE_GENERICS);
-  readProcessConfig(MODE_MODELS);
-  readProcessConfig(MODE_SENTENCEFILES);
-  readProcessConfig(MODE_SOUNDS);
-  readProcessConfig(MODE_DOWNLOADONLY);
+  ReadAndProcessConfig(Mode_Decals);
+  ReadAndProcessConfig(Mode_Generics);
+  ReadAndProcessConfig(Mode_Models);
+  ReadAndProcessConfig(Mode_SentenceFiles);
+  ReadAndProcessConfig(Mode_Sounds);
+  ReadAndProcessConfig(Mode_DownloadOnly);
 }
 
 /**
 * Read and process config files based on input mode 
 */
-public void readProcessConfig(int mode)
+public void ReadAndProcessConfig(Mode mode)
 {
   char configFilePath[PLATFORM_MAX_PATH];
-  Format(configFilePath, sizeof(configFilePath), "%s%s", PATH_BASE, modeNiceNames[mode]);
+  Format(configFilePath, sizeof(configFilePath), "%s%s", CONFIG_BASE_PATH, g_ModelNiceNames[mode]);
   BuildPath(Path_SM, configFilePath, PLATFORM_MAX_PATH, configFilePath);
   
   if (FileExists(configFilePath)) {
@@ -70,7 +79,7 @@ public void readProcessConfig(int mode)
     File file = OpenFile(configFilePath, "r");
     
     if (file != null) {
-      char buffer[PLATFORM_MAX_PATH];
+      char buffer[CONFIG_MAX_LINE_LENGTH];
       
       //For each file in the text file
       while (file.ReadLine(buffer, sizeof(buffer))) {
@@ -90,13 +99,55 @@ public void readProcessConfig(int mode)
         if (StrContains(buffer, "//") == 0)
           continue; 
         
+        //Variables
+        char path[PLATFORM_MAX_PATH];
+        ArrayList exts = new ArrayList(EXTENSION_MAX_LENGTH);
+        
+        //Process option groups (separated by spaces)
+        char buffers[MAX_OPTIONS_GROUPS][255];
+        int numOptionGroups = ExplodeString(buffer, OPTIONS_GROUP_SEPARATOR, buffers, sizeof(buffers), sizeof(buffers[]), false);
+        
+        if (numOptionGroups == -1) {
+          //No option groups, path is complete buffer
+          StripQuotes(buffer);
+          Format(path, sizeof(path), buffer);
+        }
+        else {
+          //Process Option Groups
+          for (int i = 0; i < numOptionGroups; ++i) {
+            
+            //Path is always first option group
+            if (i == 0) {
+              TrimString(buffers[i]);
+              StripQuotes(buffers[i]);
+              Format(path, sizeof(path), buffers[i]);
+              continue;
+            }
+            
+            //Extension whitelist option group
+            if (StrContains(buffers[i], OPTIONS_EXTS_ARGPREFIX) == 0) {
+              char extsBuffer[32][EXTENSION_MAX_LENGTH];
+              
+              int numExts = ExplodeString(buffers[i][strlen(OPTIONS_EXTS_ARGPREFIX)], OPTIONS_EXTS_SEPARATOR, extsBuffer, sizeof(extsBuffer), sizeof(extsBuffer[]), false);
+              if (numExts != -1) {
+                for (int j = 0; j < numExts; ++j) {
+                  exts.PushString(extsBuffer[j]);
+                }
+              }
+            }
+          }
+        }
+        
         //Proceed if directory or file exists
-        if (DirExists(buffer))
-          processDirectory(buffer, mode);
-        else if (FileExists(buffer))
-          downloadAndPrecache(buffer, mode);
+        if (DirExists(path))
+          ProcessDirectory(path, mode, exts);
+        else if (FileExists(path))
+          DownloadAndPrecache(path, mode, exts);
         else
-          LogError("File/Directory '%s' does not exist. Please check entry in config file: '%s'", buffer, modeNiceNames[mode]);
+          LogError("File/Directory '%s' does not exist. Please check entry in config file: '%s'", path, g_ModelNiceNames[mode]);
+        
+        //Cleanup
+        delete exts;
       }
       
       file.Close();
@@ -109,7 +160,7 @@ public void readProcessConfig(int mode)
 /**
 * Process a directory recursively to precache all subfiles
 */
-void processDirectory(char[] directory, int mode)
+void ProcessDirectory(char[] directory, Mode mode, ArrayList &exts)
 {
   if (DirExists(directory)) {
     //Ignore inode maps
@@ -126,9 +177,9 @@ void processDirectory(char[] directory, int mode)
       Format(subFilePath, sizeof(subFilePath), "%s/%s", directory, subFile);
     
       if (subFileType == FileType_File)
-        downloadAndPrecache(subFilePath, mode);
+        DownloadAndPrecache(subFilePath, mode, exts);
       else if (subFileType == FileType_Directory)
-        processDirectory(subFilePath, mode);
+        ProcessDirectory(subFilePath, mode, exts);
     }
   }
 }
@@ -136,24 +187,43 @@ void processDirectory(char[] directory, int mode)
 /**
 * Given a file path and mode, downloads and precaches files
 */
-void downloadAndPrecache(char[] file, int mode)
+void DownloadAndPrecache(char[] file, Mode mode, ArrayList &exts)
 {
   if (FileExists(file)) {
-    AddFileToDownloadsTable(file);
     
-    if (mode == MODE_DECALS)
+    //Extension Option
+    if (exts.Length != 0) {
+      //Check if extension is whitelisted
+      char fileExtension[EXTENSION_MAX_LENGTH];
+      GetFileExtension(file, fileExtension, sizeof(fileExtension));
+      
+      //If not in whitelist, ignore this file
+      if (exts.FindString(fileExtension) == -1)
+        return;
+    }
+    
+    //Add file to downloads table if its not already in the downloads table
+    if (!IsFileInDownloadsTable(file))
+      AddFileToDownloadsTable(file);
+    
+    //Precache file based on mode
+    if (mode == Mode_Decals) {
       PrecacheDecal(file, true);
-    else if (mode == MODE_GENERICS)
+    }
+    else if (mode == Mode_Generics) {
       PrecacheGeneric(file, true);
-    else if (mode == MODE_MODELS)
+    }
+    else if (mode == Mode_Models) {
       PrecacheModel(file, true);
-    else if (mode == MODE_SENTENCEFILES)
+    }
+    else if (mode == Mode_SentenceFiles) {
       PrecacheSentenceFile(file, true);
-    else if (mode == MODE_SOUNDS) {
+    }
+    else if (mode == Mode_Sounds) {
       //Remove sound prefix
       ReplaceStringEx(file, PLATFORM_MAX_PATH, "sound/", "", -1, -1, false);
       
-      if (fakeSoundPrecache) {
+      if (g_ShouldFakePrecacheSound) {
         char pathStar[PLATFORM_MAX_PATH];
         Format(pathStar, sizeof(pathStar), "*%s", file);
         AddToStringTable(FindStringTable("soundprecache"), pathStar);
@@ -162,4 +232,41 @@ void downloadAndPrecache(char[] file, int mode)
       }
     }
   }
+}
+
+/**
+* Get the extension given a file path
+*/
+stock bool GetFileExtension(const char[] path, char[] ext, int maxlen)
+{
+  //Find first dot
+  int index = FindCharInString(path, '.');
+  if (index == -1) {
+    return false;
+  }
+  
+  //Everything past first dot is the extension
+  Format(ext, maxlen, path[index]);
+  return true;
+}
+
+/**
+* Check if a file is in the downloads table
+*/
+stock bool IsFileInDownloadsTable(const char[] file)
+{
+  static int downloadTableId = INVALID_STRING_TABLE;
+  
+  if (downloadTableId == INVALID_STRING_TABLE) {
+    downloadTableId = FindStringTable("downloadables");
+    if (downloadTableId == INVALID_STRING_TABLE)
+      SetFailState("Failed to get table index of downloads table.");
+  }
+  
+  //If string not found, its not in the downloads table
+  if (FindStringIndex(downloadTableId, file) == INVALID_STRING_INDEX)
+    return false;
+  
+  //Otherwise it is
+  return true;
 }
